@@ -181,8 +181,20 @@ Bachelor’s in Accounting (International Program)
         )
 
         new_summary = message.content
+        
+def extract_text(text, start_tag, end_tag):
+    pattern = rf'<{re.escape(start_tag)}>(.*?)</{re.escape(end_tag)}>'
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    else:
+        return f"No content found between <{start_tag}> and </{end_tag}>"
 
-        tailor_resume = pretty_print(new_summary)
+def extract_all_text(text, start_tag, end_tag):
+    pattern = rf'<{re.escape(start_tag)}>(.*?)</{re.escape(end_tag)}>'
+    matches = re.findall(pattern, text, re.DOTALL)
+    return [match.strip() for match in matches]
+    
         tailor_summary = extract_text(tailor_resume, "output", "output")
         tailor_skills = extract_text(tailor_resume, "skill_list", "skill_list")
         formatted_output = format_output(tailor_summary, tailor_skills)
