@@ -197,7 +197,6 @@ def extract_all_text(text, start_tag, end_tag):
     
 tailor_summary = extract_text(new_summary, "output", "output")
 tailor_skills = extract_text(new_summary, "skill_list", "skill_list")
-formatted_output = format_output(tailor_summary, tailor_skills)
 
 st.subheader("Tailored Profile Summary")
 st.text_area("Profile Summary", value=tailor_summary, height=200)
