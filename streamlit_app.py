@@ -195,8 +195,8 @@ def extract_all_text(text, start_tag, end_tag):
     matches = re.findall(pattern, text, re.DOTALL)
     return [match.strip() for match in matches]
     
-tailor_summary = extract_text(tailor_resume, "output", "output")
-tailor_skills = extract_text(tailor_resume, "skill_list", "skill_list")
+tailor_summary = extract_text(new_summary, "output", "output")
+tailor_skills = extract_text(new_summary, "skill_list", "skill_list")
 formatted_output = format_output(tailor_summary, tailor_skills)
 
 st.subheader("Tailored Profile Summary")
