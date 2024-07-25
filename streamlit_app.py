@@ -1,151 +1,160 @@
 import streamlit as st
-import pandas as pd
-import math
-from pathlib import Path
+import anthropic
+import os
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Function to extract text from a given text block
+def extract_text(text, start_tag, end_tag):
+    pattern = rf'<{re.escape(start_tag)}>(.*?)</{re.escape(end_tag)}>'
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    else:
+        return f"No content found between <{start_tag}> and </{end_tag}>"
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Function to process text blocks for summary and skills extraction
+def pretty_print(message):
+    # Extract the text from the TextBlock object
+    text = message[0].text
+    # Return the formatted string instead of just printing it
+    return '\n\n'.join('\n'.join(line.strip() for line in re.findall(r'.{1,100}(?:\s+|$)', paragraph.strip('\n'))) for paragraph in re.split(r'\n\n+', text))
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+def extract_achievements(text):
+    achievements_pattern = r"- (.+?)(?=\n\n|\Z)"
+    return re.findall(achievements_pattern, text, re.DOTALL)
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+def extract_skills(text):
+    skills_pattern = r"\d+\.\s(.+)"
+    return re.findall(skills_pattern, text)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+def format_output(summary, skills):
+    # Extract the actual summary text and achievements
+    summary_text = re.sub(r"== Profile Summary\n#chiline\(\)\n", "", summary).strip()
+    achievements = extract_achievements(summary)
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    # Extract skills from the skills text
+    skill_list = extract_skills(skills)
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+    output = "== Profile Summary\n#chiline()\n"
+    output += f"*{summary_text}*\n\n"
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+    for achievement in achievements[:3]:  # Limit to 3 achievements
+        output += f"- {achievement.strip()}\n#v(0.5em)\n"
 
-    return gdp_df
+    output += "\n== Areas of Expertise\n#chiline()\n"
+    output += "#columns(3)[\n"
 
-gdp_df = get_gdp_data()
+    for i in range(0, len(skill_list), 4):
+        output += "  #align(center)[\n"
+        for skill in skill_list[i:i+4]:
+            output += f"    {skill}\\\n"
+        output += "  ]\n"
+        if i < 8:  # Add colbreak for the first two columns
+            output += "#colbreak()\n"
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+    output += "]"
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+    return output
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+# Streamlit app
+def main():
+    st.title("Resume Tailor with Anthropic API")
+    
+    # Get the API key from the user
+    api_key = st.text_input("Enter your Anthropic API key:", type="password")
+    
+    if not api_key:
+        st.warning("Please enter your API key to proceed.")
+        return
 
-# Add some spacing
-''
-''
+    os.environ['ANTHROPIC_API_KEY'] = api_key
+    
+    # Get user inputs
+    job_description = st.text_area("Job Description", height=200)
+    current_resume = st.text_area("Current Resume", height=300)
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
+    if st.button("Tailor Resume"):
+        client = anthropic.Anthropic(api_key=api_key)
 
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
+        prompt = f"""You are tasked with tailoring a resume for a specific job role. You will be provided with the current resume, including the profile summary, and the job description. Your goal is to:
 
-countries = gdp_df['Country Code'].unique()
+        1. Rewrite the profile summary to align with the job requirements.
+        2. Identify and rank the top 12 skills that are both possessed by the candidate and valuable for the target job.
 
-if not len(countries):
-    st.warning("Select at least one country")
+        First, you will be given the current resume:
 
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
+        <resume>
+        {current_resume}
+        </resume>
 
-''
-''
-''
+        Next, you will be provided with the job description:
 
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
+        <job_description>
+        {job_description}
+        </job_description>
 
-st.header('GDP over time', divider='gray')
+        Analyze both documents carefully, noting key requirements, skills, and qualifications sought by the employer.
 
-''
+        Part 1: Profile Summary
+        Rewrite the profile summary to better align with the job description. Focus on highlighting the candidate's most relevant skills, experiences, and achievements that match the job requirements. Use strong, action-oriented language and quantify achievements where possible.
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
+        Format your output as follows:
 
-''
-''
+        <output>
+        == Profile Summary
+        #chiline()
+        [key statement]
 
+        - [Key achievement 1]
+        - [Key achievement 2]
+        - [Key achievement 3]
+        </output>
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+        Part 2: Skill Ranking
+        Identify skills that are both mentioned in the resume (or can be reasonably inferred from the candidate's experience) and are relevant to the job description. Select and rank the top 12 skills based on candidate's level of expertise and relevancy to the job.
 
-st.header(f'GDP in {to_year}', divider='gray')
+        Present your final list of 12 skills in descending order of importance using the following format:
 
-''
+        <skill_list>
+        1. [Skill Name]
+        2. [Skill Name]
+        [Continue for all 12 skills]
+        </skill_list>
 
-cols = st.columns(4)
+        Ensure that your justifications are concise but informative, explaining why each skill is valuable for the job and how the candidate's experience demonstrates their proficiency."""
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[gdp_df['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[gdp_df['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+        # Create the message
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=4096,
+            temperature=0,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"""{prompt}"""
+                        }
+                    ]
+                }
+            ]
         )
+
+        new_summary = message.content
+
+        tailor_resume = pretty_print(new_summary)
+        tailor_summary = extract_text(tailor_resume, "output", "output")
+        tailor_skills = extract_text(tailor_resume, "skill_list", "skill_list")
+        formatted_output = format_output(tailor_summary, tailor_skills)
+
+        st.subheader("Tailored Profile Summary")
+        st.text_area("Profile Summary", value=tailor_summary, height=200)
+
+        st.subheader("Ranked Skills")
+        st.text_area("Skills", value=tailor_skills, height=200)
+
+        st.subheader("Formatted Output")
+        st.text_area("Formatted Output", value=formatted_output, height=300)
+
+if __name__ == "__main__":
+    main()
